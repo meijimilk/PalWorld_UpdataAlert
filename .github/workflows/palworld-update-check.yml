@@ -53,11 +53,11 @@ jobs:
             WHEN="不明"
           fi
 
-          CONTENT=$(printf '🆕 **パルワールド専用サーバーのアップデートが来ました！**\nSteam配信時刻: %s\nビルドID: `%s` → `%s`\nサーバーの更新をお願いします 🛠️' "$WHEN" "$OLD_BUILD" "$NEW_BUILD")
+          CONTENT=$(printf '@here\n🆕 **パルワールド専用サーバーのアップデートが来ました！**\nSteam配信時刻: %s\nビルドID: `%s` → `%s`\nサーバーの更新をお願いします 🛠️' "$WHEN" "$OLD_BUILD" "$NEW_BUILD")
 
           # Discordへ通知
-          jq -n --arg content "$CONTENT" --arg name "Palworld Update Notifier" \
-            '{content:$content, username:$name}' \
+                    jq -n --arg content "$CONTENT" --arg name "Palworld Update Notifier" \
+            '{content:$content, username:$name, allowed_mentions:{parse:["everyone"]}}' \
             | curl -fsSL --max-time 30 -X POST -H "Content-Type: application/json" -d @- "$DISCORD_WEBHOOK"
 
           echo "$NEW_BUILD" > "$STATE_FILE"
