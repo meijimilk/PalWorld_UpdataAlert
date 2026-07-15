@@ -1,0 +1,73 @@
+name: Palworld Update Notifier
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'   # 15分ごとにチェック（GitHub都合で数分ずれることあり）
+  workflow_dispatch:          # 手動実行ボタン用
+
+permissions:
+  contents: write             # 前回のビルドIDをリポジトリに保存するため
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: リポジトリを取得
+        uses: actions/checkout@v4
+
+      - name: ビルドID確認＆Discord通知
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+        run: |
+          set -euo pipefail
+          APPID=2394010
+          STATE_FILE=state/last_buildid.txt
+
+          # Steamの最新ビルド情報を取得（失敗したら誤通知しないよう今回はスキップ）
+          JSON=$(curl -fsSL --max-time 30 "https://api.steamcmd.net/v1/info/${APPID}") || {
+            echo "API取得失敗。今回はスキップ"; exit 0;
+          }
+
+          NEW_BUILD=$(echo "$JSON" | jq -r ".data.\"${APPID}\".depots.branches.public.buildid // empty")
+          TIME_UPDATED=$(echo "$JSON" | jq -r ".data.\"${APPID}\".depots.branches.public.timeupdated // empty")
+
+          [ -z "$NEW_BUILD" ] && { echo "ビルドID取得できず。今回はスキップ"; exit 0; }
+
+          mkdir -p state
+
+          # 初回は記録するだけ（いきなり通知が飛ぶのを防ぐ）
+          if [ ! -f "$STATE_FILE" ]; then
+            echo "初回。現在のビルドID($NEW_BUILD)を記録（通知なし）"
+            echo "$NEW_BUILD" > "$STATE_FILE"; exit 0;
+          fi
+
+          OLD_BUILD=$(cat "$STATE_FILE")
+          [ "$NEW_BUILD" = "$OLD_BUILD" ] && { echo "変化なし ($NEW_BUILD)"; exit 0; }
+
+          echo "アプデ検知: $OLD_BUILD -> $NEW_BUILD"
+
+          # 配信時刻を日本時間に変換
+          if [ -n "$TIME_UPDATED" ]; then
+            WHEN=$(TZ=Asia/Tokyo date -d "@$TIME_UPDATED" '+%Y-%m-%d %H:%M JST')
+          else
+            WHEN="不明"
+          fi
+
+          CONTENT=$(printf '🆕 **パルワールド専用サーバーのアップデートが来ました！**\nSteam配信時刻: %s\nビルドID: `%s` → `%s`\nサーバーの更新をお願いします 🛠️' "$WHEN" "$OLD_BUILD" "$NEW_BUILD")
+
+          # Discordへ通知
+          jq -n --arg content "$CONTENT" --arg name "Palworld Update Notifier" \
+            '{content:$content, username:$name}' \
+            | curl -fsSL --max-time 30 -X POST -H "Content-Type: application/json" -d @- "$DISCORD_WEBHOOK"
+
+          echo "$NEW_BUILD" > "$STATE_FILE"
+
+      - name: 前回ビルドIDの変更を保存
+        run: |
+          if [ -n "$(git status --porcelain state/)" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add state/
+            git commit -m "chore: update last buildid"
+            git push
+          fi
